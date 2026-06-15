@@ -12,6 +12,7 @@ import 'package:wongiwak/screens/sign_in_screen.dart';
 import 'package:wongiwak/widgets/commentTrigger.dart';
 import 'package:wongiwak/screens/toko_screen.dart';
 import 'package:wongiwak/screens/perbandingan_screen.dart';
+import 'package:wongiwak/screens/home_screen.dart';
 
 class DetailScreen extends StatefulWidget {
   final String ikanId;
@@ -215,7 +216,10 @@ class _DetailScreenState extends State<DetailScreen> {
           );
           await Future.delayed(const Duration(milliseconds: 200));
           if (context.mounted) {
-            Navigator.of(context).popUntil((route) => route.isFirst);
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const HomeScreen()),
+              (route) => false,
+            );
           }
         }
       } catch (e) {
@@ -290,7 +294,7 @@ class _DetailScreenState extends State<DetailScreen> {
         if (docLat == null || docLng == null) continue;
 
         final jarak = Geolocator.distanceBetween(lat, lng, docLat, docLng);
-        if (jarak <= 1000) {
+        if (jarak <= 2000) {
           hasil.add({...data, 'ikanId': doc.id, 'jarak': jarak});
         }
       }
@@ -819,7 +823,6 @@ class _DetailScreenState extends State<DetailScreen> {
                                           ),
 
                                           const SizedBox(height: 16),
-                                          const Divider(height: 1),
                                           const SizedBox(height: 14),
 
                                           ...tampil.map((item) {

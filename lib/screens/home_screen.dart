@@ -24,9 +24,15 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController searchController = TextEditingController();
   String searchQuery = '';
+
+  // Koordinat dari ALAMAT LENGKAP (untuk keperluan lain jika ada)
   double? userLatitude;
   double? userLongitude;
   bool hasFullAddress = false;
+
+  // Koordinat REAL-TIME (digunakan untuk section Terdekat)
+  double? realTimeLatitude;
+  double? realTimeLongitude;
   bool isRealTimeLocationActive = false;
 
   final List<String> kategoriOptions = [
@@ -70,8 +76,15 @@ class _HomeScreenState extends State<HomeScreen> {
           .listen((doc) {
             if (doc.exists && mounted) {
               final data = doc.data();
+
+              // Koordinat dari alamat lengkap
               final lat = (data?['latitude'] ?? 0.0) as double?;
               final lng = (data?['longitude'] ?? 0.0) as double?;
+
+              // Koordinat real-time (field terpisah)
+              final rtLat = (data?['realTimeLatitude'] ?? 0.0) as double?;
+              final rtLng = (data?['realTimeLongitude'] ?? 0.0) as double?;
+
               final isRealTimeValue = data?['isRealTimeLocation'];
               final isRealTime = (isRealTimeValue is bool)
                   ? isRealTimeValue
@@ -81,7 +94,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 userLatitude = (lat != null && lat != 0.0) ? lat : null;
                 userLongitude = (lng != null && lng != 0.0) ? lng : null;
                 hasFullAddress = userLatitude != null && userLongitude != null;
+
                 isRealTimeLocationActive = isRealTime;
+
+                // Real-time koordinat hanya valid jika toggle ON dan nilai ada
+                // PENTING: Gunakan rtLat langsung (jangan filter 0.0) karena koordinat
+                // dari GPS selalu memiliki nilai (kecil kemungkinan tepat 0.0)
+                realTimeLatitude = isRealTime ? rtLat : null;
+                realTimeLongitude = isRealTime ? rtLng : null;
               });
             }
           });
@@ -99,8 +119,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
         if (doc.exists && mounted) {
           final data = doc.data();
+
           final lat = (data?['latitude'] ?? 0.0) as double?;
           final lng = (data?['longitude'] ?? 0.0) as double?;
+
+          final rtLat = (data?['realTimeLatitude'] ?? 0.0) as double?;
+          final rtLng = (data?['realTimeLongitude'] ?? 0.0) as double?;
+
           final isRealTimeValue = data?['isRealTimeLocation'];
           final isRealTime = (isRealTimeValue is bool)
               ? isRealTimeValue
@@ -110,7 +135,11 @@ class _HomeScreenState extends State<HomeScreen> {
             userLatitude = (lat != null && lat != 0.0) ? lat : null;
             userLongitude = (lng != null && lng != 0.0) ? lng : null;
             hasFullAddress = userLatitude != null && userLongitude != null;
+
             isRealTimeLocationActive = isRealTime;
+
+            realTimeLatitude = isRealTime ? rtLat : null;
+            realTimeLongitude = isRealTime ? rtLng : null;
           });
         }
       } catch (e) {
@@ -240,6 +269,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Grid 2 kolom — dipakai saat tidak ada kondisi khusus
   Widget _buildDisarankanGrid(List<QueryDocumentSnapshot> items) {
     final screenWidth = MediaQuery.of(context).size.width;
     final cardWidth = (screenWidth - 32 - 10) / 2;
@@ -256,14 +286,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// Menghitung jarak antara dua koordinat (dalam meter) menggunakan Haversine formula
+  /// Haversine formula — hasil dalam meter
   double _calculateDistance(
     double lat1,
     double lon1,
     double lat2,
     double lon2,
   ) {
-    const R = 6371000; // Radius bumi dalam meter
+    const R = 6371000;
     final dLat = (lat2 - lat1) * math.pi / 180;
     final dLon = (lon2 - lon1) * math.pi / 180;
     final a =
@@ -273,10 +303,10 @@ class _HomeScreenState extends State<HomeScreen> {
             math.sin(dLon / 2) *
             math.sin(dLon / 2);
     final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
-    return R * c; // Hasil dalam meter
+    return R * c;
   }
 
-  /// Filter items berdasarkan radius 1km dari user location
+  /// Filter berdasarkan radius dari koordinat REAL-TIME user
   List<QueryDocumentSnapshot> _filterItemsByRadius(
     List<QueryDocumentSnapshot> items,
     double userLat,
@@ -287,9 +317,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final ikan = doc.data() as Map<String, dynamic>;
       final lat = ikan['latitude'] as double?;
       final lon = ikan['longitude'] as double?;
-
       if (lat == null || lon == null) return false;
-
       final distance = _calculateDistance(userLat, userLon, lat, lon);
       return distance <= radiusMeters;
     }).toList();
@@ -299,6 +327,204 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     searchController.dispose();
     super.dispose();
+  }
+
+  // ─────────────────────────────────────────────
+  // Helper: apakah user sedang punya langganan?
+  // Digunakan untuk menentukan layout section Disarankan.
+  // ─────────────────────────────────────────────
+  Widget _buildBodyContent(List<QueryDocumentSnapshot> filteredData) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // Section Terdekat: hanya muncul jika toggle real-time ON
+    // dan koordinat real-time tersedia
+    final bool canShowNearby =
+        isRealTimeLocationActive &&
+        realTimeLatitude != null &&
+        realTimeLongitude != null;
+
+    final List<QueryDocumentSnapshot> nearbyItems = canShowNearby
+        ? _filterItemsByRadius(
+            filteredData,
+            realTimeLatitude!,
+            realTimeLongitude!,
+            2000, // 2km radius
+          )
+        : [];
+
+    final currentUser = FirebaseAuth.instance.currentUser;
+
+    // Jika user belum login → tidak ada langganan, cek toggle untuk layout
+    if (currentUser == null) {
+      if (isRealTimeLocationActive) {
+        // Toggle ON: Disarankan horizontal scroll
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            MoreSectionWidget(
+              title: 'Disarankan',
+              items: filteredData,
+              detailBuilder: (id) => DetailScreen(ikanId: id),
+              onSeeMore: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => DisarankanScreen(items: filteredData),
+                ),
+              ),
+            ),
+            if (nearbyItems.isNotEmpty)
+              MoreSectionWidget(
+                title: 'Terdekat',
+                items: nearbyItems,
+                detailBuilder: (id) => DetailScreen(ikanId: id),
+                onSeeMore: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => TerdekatScreen(items: nearbyItems),
+                  ),
+                ),
+              ),
+            const SizedBox(height: 80),
+          ],
+        );
+      }
+
+      // Toggle OFF + belum login → grid 2 kolom
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              'Disarankan',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: isDark ? Colors.white : const Color(0xFF1A1A2E),
+                letterSpacing: -0.3,
+              ),
+            ),
+          ),
+          _buildDisarankanGrid(filteredData),
+          const SizedBox(height: 80),
+        ],
+      );
+    }
+
+    // User sudah login → cek apakah punya langganan
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUser.uid)
+          .collection('langganan')
+          .snapshots(),
+      builder: (context, subSnapshot) {
+        final hasSubscription =
+            subSnapshot.hasData && subSnapshot.data!.docs.isNotEmpty;
+
+        final bool useGridLayout =
+            !isRealTimeLocationActive && !hasSubscription;
+
+        // ── Hitung item Langganan ─────────────────────────────────────────
+        List<QueryDocumentSnapshot> subscribedProducts = [];
+        if (hasSubscription) {
+          final subscribedUsernames = subSnapshot.data!.docs
+              .map((doc) => doc['username'] as String)
+              .toList();
+
+          final shouldLimitItems = subscribedUsernames.length > 4;
+          final itemsPerUser = shouldLimitItems ? 2 : 999;
+
+          final Map<String, List<QueryDocumentSnapshot>> productsByUser = {};
+          for (final username in subscribedUsernames) {
+            productsByUser[username] = filteredData
+                .where((doc) {
+                  final ikan = doc.data() as Map<String, dynamic>;
+                  return ikan['username']?.toString() == username;
+                })
+                .take(itemsPerUser)
+                .toList();
+          }
+
+          subscribedProducts = productsByUser.values
+              .expand((list) => list)
+              .toList();
+        }
+
+        // ── Render ─────────────────────────────────────────────────────────
+        if (useGridLayout) {
+          // Grid 2 kolom — toggle OFF dan belum subscribe siapapun
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(
+                  'Disarankan',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: isDark ? Colors.white : const Color(0xFF1A1A2E),
+                    letterSpacing: -0.3,
+                  ),
+                ),
+              ),
+              _buildDisarankanGrid(filteredData),
+              const SizedBox(height: 80),
+            ],
+          );
+        }
+
+        // Horizontal scroll — toggle ON atau sudah subscribe
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Disarankan — selalu horizontal scroll di sini
+            MoreSectionWidget(
+              title: 'Disarankan',
+              items: filteredData,
+              detailBuilder: (id) => DetailScreen(ikanId: id),
+              onSeeMore: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => DisarankanScreen(items: filteredData),
+                ),
+              ),
+            ),
+
+            // Langganan — tampil jika punya subscription (terlepas toggle)
+            if (hasSubscription && subscribedProducts.isNotEmpty)
+              MoreSectionWidget(
+                title: 'Langganan',
+                items: subscribedProducts,
+                detailBuilder: (id) => DetailScreen(ikanId: id),
+                onSeeMore: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => LanggananScreen(items: subscribedProducts),
+                  ),
+                ),
+              ),
+
+            // Terdekat — hanya muncul jika toggle real-time ON dan ada item dalam radius
+            if (nearbyItems.isNotEmpty)
+              MoreSectionWidget(
+                title: 'Terdekat',
+                items: nearbyItems,
+                detailBuilder: (id) => DetailScreen(ikanId: id),
+                onSeeMore: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => TerdekatScreen(items: nearbyItems),
+                  ),
+                ),
+              ),
+
+            const SizedBox(height: 80),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -387,6 +613,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 16),
 
+              // Search bar
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 14,
@@ -436,6 +663,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 14),
 
+              // Kategori chips
               SizedBox(
                 height: 36,
                 child: ListView.separated(
@@ -501,6 +729,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 22),
 
+              // Main data stream
               StreamBuilder<QuerySnapshot>(
                 stream: FirebaseFirestore.instance
                     .collection('ikan')
@@ -561,181 +790,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     );
                   }
 
-                  // Section Terdekat: item ke-5 dan seterusnya
-                  final terdekatItems = filteredData.length > 4
-                      ? filteredData.sublist(4)
-                      : <QueryDocumentSnapshot>[];
-
-                  // Filter terdekat berdasarkan radius 1km jika user punya alamat lengkap & toggle aktif
-                  List<QueryDocumentSnapshot> nearbyItems = [];
-                  if (hasFullAddress &&
-                      isRealTimeLocationActive &&
-                      userLatitude != null &&
-                      userLongitude != null) {
-                    nearbyItems = _filterItemsByRadius(
-                      terdekatItems,
-                      userLatitude!,
-                      userLongitude!,
-                      1000, // 1 km dalam meter
-                    );
-                  }
-
-                  // Jika user belum punya alamat lengkap, tampilkan Disarankan dengan grid 2 kolom
-                  if (!hasFullAddress) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: Text(
-                            'Disarankan',
-                            style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w700,
-                              color: isDark
-                                  ? Colors.white
-                                  : const Color(0xFF1A1A2E),
-                              letterSpacing: -0.3,
-                            ),
-                          ),
-                        ),
-                        _buildDisarankanGrid(filteredData),
-                        const SizedBox(height: 80),
-                      ],
-                    );
-                  }
-
-                  // Jika user punya alamat lengkap TAPI toggle real-time OFF, tampilkan grid 2 kolom
-                  if (hasFullAddress && !isRealTimeLocationActive) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: Text(
-                            'Disarankan',
-                            style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w700,
-                              color: isDark
-                                  ? Colors.white
-                                  : const Color(0xFF1A1A2E),
-                              letterSpacing: -0.3,
-                            ),
-                          ),
-                        ),
-                        _buildDisarankanGrid(filteredData),
-                        const SizedBox(height: 80),
-                      ],
-                    );
-                  }
-
-                  // Jika user punya alamat lengkap DAN toggle real-time ON, tampilkan MoreSectionWidget
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      MoreSectionWidget(
-                        title: 'Disarankan',
-                        items: filteredData,
-                        detailBuilder: (id) => DetailScreen(ikanId: id),
-                        onSeeMore: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                DisarankanScreen(items: filteredData),
-                          ),
-                        ),
-                      ),
-
-                      // 🌟 PROTEKSI DISINI: StreamBuilder Langganan hanya di-render jika User tidak null (sudah login)
-                      if (FirebaseAuth.instance.currentUser != null)
-                        StreamBuilder<QuerySnapshot>(
-                          stream: FirebaseFirestore.instance
-                              .collection('users')
-                              .doc(FirebaseAuth.instance.currentUser!.uid)
-                              .collection('langganan')
-                              .snapshots(),
-                          builder: (context, subSnapshot) {
-                            if (subSnapshot.connectionState ==
-                                ConnectionState.waiting) {
-                              return const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 20),
-                                child: Center(
-                                  child: CircularProgressIndicator(
-                                    color: Color(0xFF6C8EF5),
-                                  ),
-                                ),
-                              );
-                            }
-
-                            if (!subSnapshot.hasData ||
-                                subSnapshot.data!.docs.isEmpty) {
-                              return const SizedBox.shrink();
-                            }
-
-                            final subscribedUsernames = subSnapshot.data!.docs
-                                .map((doc) => doc['username'] as String)
-                                .toList();
-
-                            final shouldLimitItems =
-                                subscribedUsernames.length > 4;
-                            final itemsPerUser = shouldLimitItems ? 2 : 999;
-
-                            final Map<String, List<QueryDocumentSnapshot>>
-                            productsByUser = {};
-                            for (final username in subscribedUsernames) {
-                              productsByUser[username] = filteredData
-                                  .where((doc) {
-                                    final ikan =
-                                        doc.data() as Map<String, dynamic>;
-                                    return ikan['username']?.toString() ==
-                                        username;
-                                  })
-                                  .take(itemsPerUser)
-                                  .toList();
-                            }
-
-                            final subscribedProducts = productsByUser.values
-                                .expand((list) => list)
-                                .toList();
-
-                            if (subscribedProducts.isEmpty) {
-                              return const SizedBox.shrink();
-                            }
-
-                            return MoreSectionWidget(
-                              title: 'Langganan',
-                              items: subscribedProducts,
-                              detailBuilder: (id) => DetailScreen(ikanId: id),
-                              onSeeMore: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => LanggananScreen(
-                                    items: subscribedProducts,
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-
-                      if (nearbyItems.isNotEmpty)
-                        MoreSectionWidget(
-                          title: 'Terdekat',
-                          items: nearbyItems,
-                          detailBuilder: (id) => DetailScreen(ikanId: id),
-                          onSeeMore: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  TerdekatScreen(items: nearbyItems),
-                            ),
-                          ),
-                        ),
-
-                      const SizedBox(height: 80),
-                    ],
-                  );
+                  return _buildBodyContent(filteredData);
                 },
               ),
             ],

@@ -103,10 +103,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _startLocationStream() async {
     try {
+      debugPrint('📍 SETTINGS: Starting location stream...');
+
       // Cek & minta izin dulu
       LocationPermission permission = await Geolocator.checkPermission();
+      debugPrint('📍 SETTINGS: Permission status = $permission');
+
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
+        debugPrint('📍 SETTINGS: Permission requested = $permission');
         if (permission == LocationPermission.denied) {
           _showSnackBar('Izin lokasi ditolak');
           setState(() => isRealTimeLocationActive = false);
@@ -120,6 +125,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return;
       }
 
+      // Ambil posisi pertama kali langsung
+      try {
+        final initialPosition = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+          ),
+        );
+
+        debugPrint(
+          '📍 SETTINGS: Initial position = lat=${initialPosition.latitude}, lng=${initialPosition.longitude}',
+        );
+
+        if (currentUser != null) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(currentUser!.uid)
+              .update({
+                'realTimeLatitude': initialPosition.latitude,
+                'realTimeLongitude': initialPosition.longitude,
+              });
+          debugPrint('✅ SETTINGS: Saved initial position to Firestore');
+        }
+      } catch (e) {
+        debugPrint('❌ SETTINGS: Error mengambil posisi awal: $e');
+      }
+
       // Mulai stream — update setiap pindah 200 meter
       _locationStream =
           Geolocator.getPositionStream(
@@ -129,6 +160,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ).listen((Position position) async {
             try {
+              debugPrint(
+                '📍 SETTINGS: Position stream update = lat=${position.latitude}, lng=${position.longitude}',
+              );
+
               // Konversi koordinat → nama kota
               final placemarks = await placemarkFromCoordinates(
                 position.latitude,
@@ -143,12 +178,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ? '$kota, $provinsi'.replaceAll(RegExp(', \$'), '').trim()
                     : '';
 
-                if (lokasiSingkat.isNotEmpty && currentUser != null) {
-                  // Update field "location" di Firestore (BUKAN "alamat")
+                if (currentUser != null) {
+                  // Update field "location" dan koordinat real-time ke Firestore
                   await FirebaseFirestore.instance
                       .collection('users')
                       .doc(currentUser!.uid)
-                      .update({'location': lokasiSingkat});
+                      .update({
+                        'location': lokasiSingkat,
+                        'realTimeLatitude': position.latitude,
+                        'realTimeLongitude': position.longitude,
+                      });
 
                   if (mounted) {
                     setState(() => locationController.text = lokasiSingkat);
@@ -167,10 +206,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _toggleRealTimeLocation(bool value) async {
+    debugPrint('🔘 SETTINGS: Toggle real-time location = $value');
+
     setState(() => isRealTimeLocationActive = value);
 
     if (currentUser == null) {
       _showSnackBar('User tidak login');
+      debugPrint('❌ SETTINGS: User not logged in');
       return;
     }
 
@@ -181,14 +223,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
           .doc(currentUser!.uid)
           .update({'isRealTimeLocation': value});
 
+      debugPrint('✅ SETTINGS: Saved isRealTimeLocation=$value to Firestore');
+
       if (value) {
+        debugPrint('🔄 SETTINGS: Starting location stream...');
         await _startLocationStream();
         _showSnackBar('Lacak lokasi real-time diaktifkan');
       } else {
+        debugPrint('🛑 SETTINGS: Stopping location stream...');
         _stopLocationStream();
         _showSnackBar('Lacak lokasi real-time dimatikan');
       }
     } catch (e) {
+      debugPrint('❌ SETTINGS: Error: $e');
       _showSnackBar('Error mengubah pengaturan: $e');
       setState(() => isRealTimeLocationActive = !value);
     }

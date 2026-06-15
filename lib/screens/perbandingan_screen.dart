@@ -64,8 +64,8 @@ class _PerbandinganScreenState extends State<PerbandinganScreen> {
           lng,
         );
 
-        // Hanya ambil yang dalam radius 1km (1000 meter)
-        if (jarak <= 1000) {
+        // Hanya ambil yang dalam radius 2km (2000 meter)
+        if (jarak <= 2000) {
           hasil.add({...data, 'ikanId': doc.id, 'jarak': jarak});
         }
       }
